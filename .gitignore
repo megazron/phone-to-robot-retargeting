@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+models/
+third_party/
+data/raw/*
+!data/raw/.gitkeep
+results/*/bc_policy.pt
+results/*/side_by_side.mp4
+results/smoke/
+results/*/*.gif

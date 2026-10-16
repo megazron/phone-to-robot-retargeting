@@ -1,0 +1,9 @@
+mujoco==3.16.0
+mediapipe==1.1.1
+numpy==2.5.4
+scipy==1.18.1
+opencv-python-headless==5.0.0.93
+imageio[ffmpeg]==2.38.1
+imageio-ffmpeg==0.6.0
+matplotlib==3.11.2
+pytest==9.1.1
