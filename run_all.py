@@ -17,15 +17,19 @@ ROOT = Path(__file__).resolve().parent
 VIDEO_EXT = {".mp4", ".mov", ".m4v", ".avi", ".mkv"}
 
 
-def save_raw(raw, path):
+def save_raw(raw, path, mug=None):
+    extra = {} if mug is None else {"mug": mug.astype(np.float32)}
     np.savez_compressed(path, img=raw["img"].astype(np.float32), world=raw["world"].astype(np.float32),
-                        fps=raw["fps"], width=raw["width"], height=raw["height"])
+                        fps=raw["fps"], width=raw["width"], height=raw["height"], **extra)
 
 
 def load_raw(path):
     d = np.load(path)
-    return {"img": d["img"].astype(float), "world": d["world"].astype(float), "fps": float(d["fps"]),
-            "width": float(d["width"]), "height": float(d["height"])}
+    out = {"img": d["img"].astype(float), "world": d["world"].astype(float), "fps": float(d["fps"]),
+           "width": float(d["width"]), "height": float(d["height"])}
+    if "mug" in d:
+        out["mug"] = d["mug"].astype(float)
+    return out
 
 
 def save_clip(frames, fps, path, width=480):
@@ -38,21 +42,21 @@ def save_clip(frames, fps, path, width=480):
 
 def extract_tracks(raw_dir, data_dir):
     from touchpoint.hand import detect, read_video
+    from touchpoint.topdown import track_mug
     videos = sorted(p for p in Path(raw_dir).iterdir() if p.suffix.lower() in VIDEO_EXT) if Path(raw_dir).is_dir() else []
     if not videos:
         sys.exit(f"No videos found in {raw_dir}/ (looked for {', '.join(sorted(VIDEO_EXT))}).\n"
                  "Record 3-5 short clips as described in the README, copy them there and re-run,\n"
                  "or run `make synthetic` to check the pipeline without real data.")
     (data_dir / "tracks").mkdir(parents=True, exist_ok=True)
-    (data_dir / "clips").mkdir(parents=True, exist_ok=True)
     for v in videos:
         print(f"[hand] {v.name}")
         raw = detect(v)
+        frames, _ = read_video(v)
+        mug = track_mug(frames)
         hit = np.isfinite(raw["img"][:, 0, 0]).mean()
-        print(f"       {len(raw['img'])} frames, hand found in {hit:.0%}")
-        save_raw(raw, data_dir / "tracks" / f"{v.stem}.npz")
-        frames, fps = read_video(v)
-        save_clip(frames, fps, data_dir / "clips" / f"{v.stem}.mp4")
+        print(f"       {len(raw['img'])} frames, hand found in {hit:.0%}, mug radius {np.median(mug[:, 2]):.0f} px")
+        save_raw(raw, data_dir / "tracks" / f"{v.stem}.npz", mug)
 
 
 def make_synthetic(data_dir, n=3):
@@ -107,28 +111,37 @@ def main():
     from touchpoint.retarget import retarget
     from touchpoint.rollout import run_plan
     from touchpoint.sim import PickPlaceEnv
-    from touchpoint.viz import phase_plot, results_chart, side_by_side
+    from touchpoint.viz import episodes_plot, phase_plot, results_chart, side_by_side
 
     t0 = time.time()
-    tracks, names = [], []
+    from touchpoint.topdown import lift_topdown, split_episodes
+    tracks, names, sources = [], [], []
     for f in files:
+        raw = load_raw(f)
         try:
-            tk = lift(load_raw(f))
-            retarget(tk, (0.45, -0.15), (0.5, 0.15), np.array([0.55, 0, 0.5]))  # checks segmentation
+            if "mug" in raw:      # top-down phone clips: mug-centric frame, several episodes per clip
+                eps = split_episodes(lift_topdown(raw, raw["mug"]))
+            else:                 # single-episode tracks (synthetic side view)
+                eps = [lift(raw)]
+                eps[0]["frame0"] = 0
+            for k, tk in enumerate(eps):
+                retarget(tk, (0.45, -0.15), (0.5, 0.15), np.array([0.55, 0, 0.5]))  # checks segmentation
+                tracks.append(tk)
+                names.append(f"{f.stem}_ep{k}" if len(eps) > 1 else f.stem)
+                sources.append(f.stem)
         except ValueError as e:
             print(f"[skip] {f.name}: {e}")
             continue
-        tracks.append(tk)
-        names.append(f.stem)
     if not tracks:
         sys.exit("None of the hand tracks could be segmented into a grasp and a release.")
-    print(f"[tracks] {len(tracks)} usable: {', '.join(names)}")
+    print(f"[tracks] {len(tracks)} episodes from {len(files)} clips: {', '.join(names)}")
+    episodes_plot(tracks, names, out / "episodes.png")
 
     # 1. one demo, re-anchored to a showcase layout, rendered next to the phone clip
     env = PickPlaceEnv(render_size=(400, 300))
-    layout = {"cube": np.array([0.45, -0.17]), "bowl": np.array([0.52, 0.16])}
+    layout = {"cube": np.array([0.45, -0.17]), "mug": np.array([0.52, 0.16])}
     env.reset(layout)
-    plan = retarget(tracks[0], layout["cube"], layout["bowl"], env.home_tcp)
+    plan = retarget(tracks[0], layout["cube"], layout["mug"], env.home_tcp)
     frames, widths = [], []
     env.reset(layout)
     for i in range(len(plan["ref"])):
@@ -137,10 +150,12 @@ def main():
         frames.append(env.render())
     print(f"[retarget] {names[0]}: {len(plan['ref'])} steps, time scale x{plan['time_scale']:.2f}, "
           f"success={env.success()}")
-    clip_path = data_dir / "clips" / f"{names[0]}.mp4"
-    if clip_path.exists():
-        side_by_side(load_clip(clip_path), tracks[0], plan, frames, out / "side_by_side.gif", every=4, height=240)
-        side_by_side(load_clip(clip_path), tracks[0], plan, frames, out / "side_by_side.mp4", every=1)
+    clip_path = next((p for p in (data_dir / "raw" / f"{sources[0]}.mp4", data_dir / "clips" / f"{sources[0]}.mp4")
+                      if p.exists()), None)
+    if clip_path is not None:
+        clip = load_clip(clip_path)[tracks[0]["frame0"]:]
+        side_by_side(clip, tracks[0], plan, frames, out / "side_by_side.gif", every=4, height=300)
+        side_by_side(clip, tracks[0], plan, frames, out / "side_by_side.mp4", every=1)
     phase_plot(tracks[0], plan, widths, out / "phases.png")
 
     # 2. data multiplier: every clip re-anchored to random layouts, DART noise, keep successes

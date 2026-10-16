@@ -29,10 +29,10 @@ def _maybe_nudge(env, rng, state):
 def obs_vec(o):
     # position = the commanded TCP reference, so actions are increments of the command and
     # do not absorb the servo's steady-state tracking error
-    tcp, cube, bowl = o["ref"], o["cube"], o["bowl"]
+    tcp, cube, mug = o["ref"], o["cube"], o["mug"]
     # no previous gripper command in the observation: the policy has to infer the phase
     # from geometry and finger width, which avoids the "never closes" copycat failure
-    return np.r_[tcp, cube - tcp, bowl[:2] - tcp[:2], bowl[:2] - cube[:2], o["width"] / 0.08].astype(np.float32)
+    return np.r_[tcp, cube - tcp, mug[:2] - tcp[:2], mug[:2] - cube[:2], o["width"] / 0.08].astype(np.float32)
 
 
 def run_plan(env, layout, plan, nudge_rng=None, replan=False, noise=0.0, rng=None, frames=None):

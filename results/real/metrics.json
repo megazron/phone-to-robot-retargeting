@@ -1,0 +1,32 @@
+{
+  "data": "real",
+  "clips": [
+    "clip01_ep0",
+    "clip01_ep1",
+    "clip01_ep2",
+    "clip02_ep0",
+    "clip02_ep1",
+    "clip02_ep2",
+    "clip03_ep0",
+    "clip03_ep1",
+    "clip03_ep2",
+    "clip03_ep3",
+    "clip04_ep0",
+    "clip04_ep1",
+    "clip04_ep2"
+  ],
+  "eval_layouts": 100,
+  "success": {
+    "fixed_fit": 0.0,
+    "anchored": 0.75,
+    "bc": 0.16,
+    "anchored_nudged": 0.04,
+    "bc_nudged": 0.11
+  },
+  "collection": {
+    "episodes": 600,
+    "kept": 425,
+    "samples": 103773
+  },
+  "runtime_s": 205.7
+}

@@ -1,4 +1,4 @@
-"""Tabletop pick-and-place scene: Franka Panda (mujoco_menagerie), a cube and a bowl.
+"""Tabletop pick-and-place scene: Franka Panda (mujoco_menagerie), a disc and a mug.
 
 Control interface is Cartesian: each step takes a target TCP position and a binary
 gripper command. A damped-least-squares IK turns that into joint position targets for
@@ -16,9 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 PANDA_DIR = ROOT / "third_party" / "mujoco_menagerie" / "franka_emika_panda"
 
 CTRL_DT = 0.05            # 20 Hz policy / replay rate
-CUBE_HALF = 0.02
-BOWL_R = 0.075
+CUBE_HALF = 0.015         # 4.2 x 4.2 x 3 cm block standing in for the ~4 cm plastic disc
+MUG_R = 0.05            # inner radius
+MUG_H = 0.10
 TCP_OFFSET = np.array([0.0, 0.0, 0.1034])   # hand frame -> fingertip centre
+FLOOR_Z = 0.008
+WS_LO = np.array([0.2, -0.5, FLOOR_Z])
+WS_HI = np.array([0.8, 0.5, 0.55])
 MAX_STEP = 0.025          # max TCP reference displacement per control step (m)
 
 # reachable layout region (robot base at origin, table = floor plane)
@@ -43,28 +47,28 @@ SCENE_XML = """
   <worldbody>
     <light pos="0.4 -0.3 1.6" dir="0 0.2 -1" directional="true" diffuse="0.5 0.5 0.5"/>
     <geom name="table" size="0 0 0.05" type="plane" material="table"/>
-    <body name="cube" pos="0.5 0 0.02">
+    <body name="cube" pos="0.5 0 0.01">
       <freejoint name="cube"/>
-      <geom name="cube" type="box" size="0.02 0.02 0.02" mass="0.05" friction="1.5 0.02 0.001"
-        condim="4" rgba="0.85 0.22 0.18 1"/>
+      <geom name="cube" type="box" size="0.021 0.021 0.015" mass="0.02" friction="2.5 0.05 0.001"
+        condim="4" rgba="0.95 0.95 0.93 1"/>
     </body>
-    <body name="bowl" mocap="true" pos="0.5 0.2 0">
-      <geom type="cylinder" size="0.08 0.003" pos="0 0 0.003" rgba="0.2 0.45 0.75 1"/>
-      BOWL_WALLS
+    <body name="mug" mocap="true" pos="0.5 0.2 0">
+      <geom type="cylinder" size="0.056 0.004" pos="0 0 0.004" rgba="0.08 0.08 0.09 1"/>
+      MUG_WALLS
     </body>
   </worldbody>
 </mujoco>
 """
 
 
-def _bowl_walls(n=14, r=0.08, h=0.025):
+def _mug_walls(n=18, r=0.053, h=0.05):
     out = []
     for k in range(n):
         a = 2 * np.pi * k / n
         half_len = r * np.tan(np.pi / n) + 0.002
         out.append(
             f'<geom type="box" size="0.004 {half_len:.4f} {h:.3f}" pos="{r*np.cos(a):.4f} {r*np.sin(a):.4f} {h:.3f}" '
-            f'euler="0 0 {a:.4f}" rgba="0.2 0.45 0.75 1"/>'
+            f'euler="0 0 {a:.4f}" rgba="0.08 0.08 0.09 1"/>'
         )
     return "\n      ".join(out)
 
@@ -75,19 +79,19 @@ def scene_path():
             f"Panda model not found at {PANDA_DIR}. Run `make setup` (scripts/setup.sh) first."
         )
     p = PANDA_DIR / "touchpoint_scene.xml"
-    xml = SCENE_XML.replace("BOWL_WALLS", _bowl_walls())
+    xml = SCENE_XML.replace("MUG_WALLS", _mug_walls())
     if not p.exists() or p.read_text() != xml:
         p.write_text(xml)
     return p
 
 
 def sample_layout(rng):
-    """Random cube / bowl xy positions with a minimum separation."""
+    """Random cube / mug xy positions with a minimum separation."""
     while True:
         c = rng.uniform([X_RANGE[0], Y_RANGE[0]], [X_RANGE[1], Y_RANGE[1]])
         b = rng.uniform([X_RANGE[0], Y_RANGE[0]], [X_RANGE[1], Y_RANGE[1]])
         if np.linalg.norm(c - b) > MIN_SEP:
-            return {"cube": c, "bowl": b}
+            return {"cube": c, "mug": b}
 
 
 class PickPlaceEnv:
@@ -99,7 +103,7 @@ class PickPlaceEnv:
         self.hand_id = self.model.body("hand").id
         self.cube_jnt = self.model.joint("cube").qposadr[0]
         self.cube_dof = self.model.joint("cube").dofadr[0]
-        self.bowl_mocap = self.model.body("bowl").mocapid[0]
+        self.mug_mocap = self.model.body("mug").mocapid[0]
         self.home_q = self.model.key("home").qpos[:7].copy()
         self.q_lo = self.model.jnt_range[:7, 0]
         self.q_hi = self.model.jnt_range[:7, 1]
@@ -118,7 +122,7 @@ class PickPlaceEnv:
         mujoco.mj_resetDataKeyframe(m, d, m.key("home").id)
         d.qpos[self.cube_jnt:self.cube_jnt + 3] = [*layout["cube"], CUBE_HALF]
         d.qpos[self.cube_jnt + 3:self.cube_jnt + 7] = [1, 0, 0, 0]
-        d.mocap_pos[self.bowl_mocap] = [*layout["bowl"], 0.0]
+        d.mocap_pos[self.mug_mocap] = [*layout["mug"], 0.0]
         mujoco.mj_forward(m, d)
         self.q_des = self.home_q.copy()
         self.grip = 0.0
@@ -137,8 +141,8 @@ class PickPlaceEnv:
     def cube_pos(self):
         return self.data.qpos[self.cube_jnt:self.cube_jnt + 3].copy()
 
-    def bowl_pos(self):
-        return self.data.mocap_pos[self.bowl_mocap].copy()
+    def mug_pos(self):
+        return self.data.mocap_pos[self.mug_mocap].copy()
 
     def finger_width(self):
         return float(self.data.qpos[7] + self.data.qpos[8])
@@ -148,7 +152,7 @@ class PickPlaceEnv:
             "tcp": self.tcp().copy(),
             "ref": self.ref.copy(),
             "cube": self.cube_pos(),
-            "bowl": self.bowl_pos(),
+            "mug": self.mug_pos(),
             "width": self.finger_width(),
             "grip": self.grip,
         }
@@ -160,8 +164,8 @@ class PickPlaceEnv:
 
     def success(self):
         c = self.cube_pos()
-        in_bowl = np.linalg.norm(c[:2] - self.bowl_pos()[:2]) < BOWL_R - 0.01 and c[2] < 0.05
-        return bool(in_bowl and self.grip < 0.5 and self.finger_width() > 0.05)
+        in_mug = np.linalg.norm(c[:2] - self.mug_pos()[:2]) < MUG_R and c[2] < MUG_H - 0.01
+        return bool(in_mug and self.grip < 0.5 and self.finger_width() > 0.05)
 
     # ---------- control ----------
     def _solve_ik(self, target, iters=6, damping=0.05):
@@ -196,7 +200,7 @@ class PickPlaceEnv:
         if n > MAX_STEP:
             delta *= MAX_STEP / n
         self.ref = self.ref + delta
-        self.ref[2] = max(self.ref[2], 0.017)   # keep the fingertips off the table
+        self.ref = np.clip(self.ref, WS_LO, WS_HI)   # workspace box; z floor keeps fingertips off the table
         self.q_des = self._solve_ik(self.ref)
         self.grip = float(grip > 0.5)
         self.data.ctrl[:7] = self.q_des

@@ -2,163 +2,164 @@
 
 Contact-anchored retargeting of phone-recorded hand demos to a Franka Panda in MuJoCo.
 
-A few phone clips of my hand picking up a small object and dropping it in a bowl are turned
-into hundreds of robot demonstrations, and a closed-loop policy is trained on them. MediaPipe
-gives a 3D wrist track and a thumb-index aperture; the two contact moments in each clip (hand
-closes on the object, hand opens over the bowl) are pinned to the object and bowl in the sim,
-and the rest of the human motion is carried over. Because the anchors can be placed anywhere,
-one clip yields a demo for any cube/bowl layout.
+I filmed my hand dropping small plastic discs into a mug with a handheld phone (4 clips,
+13 pick-and-drop episodes, about 100 s of video). Each episode is turned into a 3D pinch-point
+trajectory in a mug-centred frame, and the two contact moments (fingers close on a disc, fingers
+open over the mug) are pinned to the object and the mug in the simulator. Everything between the
+anchors keeps the shape and timing of my hand. Because the anchors can be placed anywhere, the
+13 episodes become hundreds of robot demonstrations, which train a closed-loop policy.
 
-![side by side](docs/side_by_side_synthetic.gif)
+![side by side](docs/side_by_side.gif)
 
-*Pipeline check on a synthetic hand track (left, rendered skeleton) driving the Panda (right).
-Replace with the phone-clip version after `make real`.*
+*Left: phone clip with MediaPipe landmarks and the detected phase. Right: the Panda executing the
+same episode, re-anchored to a different block and mug position.*
 
-## Recording the data
+## Data
 
-- Phone propped still (against a book is fine), side or 3/4 view of the table, landscape, 30 fps.
-- Start with the hand resting on the table, then: reach, pinch a small object (~4 cm), lift,
-  move it 20-40 cm, drop it in a bowl, take the hand away. 5-8 s per clip.
-- Keep the whole hand in frame and avoid covering the thumb and index tips with the object.
-- 3-5 clips, slightly different paths. Copy them to `data/raw/` (`.mp4` or `.mov`).
+`data/raw/clip01-04.mp4`: top-down, handheld phone, 30 fps, beige table, one black mug, four
+white ~4 cm discs. Each clip has 3-4 sequential episodes (pick a disc, carry it to the mug, drop
+it, return). The originals were cropped around the mug to cancel hand drift and strip audio and
+metadata (`scripts/prepare_clips.py`); only the crops are in the repo.
+`data/tracks/*.npz` holds the per-frame MediaPipe landmarks and the mug track, so the results can
+be reproduced without running MediaPipe.
 
-## Install
+To record your own: phone roughly above the table, mug and objects in view the whole time, hand
+coming in from one side, a pause with the hand closed on the object and a clear opening over the mug.
+
+## Install and run
 
 ```bash
 git clone https://github.com/megazron/phone-to-robot-retargeting
 cd phone-to-robot-retargeting
-make setup      # .venv with pinned deps (CPU torch), Panda model from mujoco_menagerie, MediaPipe model
+make setup     # .venv with pinned deps (CPU torch), Panda from mujoco_menagerie, MediaPipe model
+make demo      # results from the committed hand tracks (no MediaPipe), about 5 min on 22 CPU cores
+make real      # same, but re-runs MediaPipe and mug tracking on data/raw/*.mp4
+make smoke     # pytest on synthetic tracks, about 30 s
 ```
 
-Tested on Ubuntu (WSL2), Python 3.12, CPU only. Rendering uses the default GL backend if a
-display exists, otherwise OSMesa (`MUJOCO_GL=egl` also works on GPU servers).
-
-## Run
-
-```bash
-make real        # data/raw/*.mp4 -> MediaPipe -> data/tracks + data/clips -> everything below
-make demo        # same, from the committed hand tracks in data/tracks (no MediaPipe)
-make synthetic   # pipeline check on generated hand tracks, no video needed
-make smoke       # pytest, about 30 s on CPU
-```
-
-`python run_all.py data/raw` is the same as `make real`. Each run writes to `results/<real|synthetic>/`:
-`metrics.json`, `metrics.md`, `results.png`, `phases.png`, `side_by_side.gif`, `bc_nudged.gif`,
-`bc_policy.pt`. A full run (600 re-anchored episodes, 40 epochs, 100 eval layouts x 5 conditions)
-takes about 6 minutes on 22 CPU cores.
+Outputs go to `results/real/`: `metrics.json`, `metrics.md`, `results.png`, `episodes.png`,
+`phases.png`, `side_by_side.gif/.mp4`, `bc_nudged.gif`, `bc_policy.pt`. Tested on Ubuntu (WSL2),
+Python 3.12, CPU only. Rendering uses the default GL backend with a display, OSMesa without one.
 
 ## Method
 
-**1. Hand track** (`touchpoint/hand.py`). MediaPipe HandLandmarker returns 21 image landmarks
-and 21 metric "world" landmarks centred on the hand. For a pinhole camera each landmark gives
-`u - cx = f (X + tx) / (Z + tz)`, which is linear in the hand translation `t`; solving it over all
-21 points is the apparent-hand-size depth cue, using the whole hand rather than one palm length.
-`f` comes from an assumed 66 deg phone FOV, so the global scale is only approximate. Missed frames
-are interpolated, then Savitzky-Golay smoothed.
+**1. Mug-centric hand track** (`touchpoint/topdown.py`). The phone moves, so pixels are not a
+frame. The mug is: it is tracked per frame as a dark circle and its rim radius in pixels (rim
+diameter about 8 cm) gives the metres-per-pixel of that frame. The pinch point (midpoint of
+thumb and index tips from MediaPipe) is expressed relative to the mug centre, which cancels the
+drift. Height comes from the apparent hand size, which scales with 1 / distance to the camera:
+`z = D (1 - L_grasp / L)`, with `L_grasp` the hand size while it touches the table at the grasp and
+`D` the camera-table distance estimated from the mug radius and an assumed focal length.
+This is the weakest signal (roughly +-30%, see the height plot below).
 
-**2. Phases.** The aperture is normalised per clip and thresholded with hysteresis
-(close < 0.30, open > 0.55). The longest closed interval is the grasp; its end is the release.
+**2. Episodes.** In a top-down view the thumb-index aperture is noisy (the fingers occlude each
+other), but distance to the mug is very clean. A release is the closest approach in each
+interval where the pinch point is within 9 cm of the mug axis; the grasp is the frame with the
+smallest aperture while the hand is out at the disc, between the previous release and this one.
 
-**3. Contact-anchored retargeting** (`touchpoint/retarget.py`). With `p(t)` the wrist, `h_g`, `h_r` the
-wrist at grasp and release, `g` the cube and `r` a point above the bowl:
+![episodes](docs/episodes.png)
+
+**3. Contact-anchored retargeting** (`touchpoint/retarget.py`). With `p(t)` the pinch point,
+`h_g`, `h_r` its position at grasp and release, `g` the block and `r` a point above the mug:
 
 ```
 x(t) = g + F S H^T (p(t) - h_g) + w(t) * residual
 
-H : human task frame. e1 = transport direction projected on the table, e3 = table normal
-    (plane through the wrist at rest, grasp and release, i.e. three moments near the table)
-F : robot task frame. f1 = cube -> bowl, f3 = world z
-S : diag(s_along, 1, 1). s_along makes the transport length match; lift height, sideways
-    curvature and approach direction keep their (metric) human values
-w : minimum-jerk blend of the residual that makes the start pose and the release land exactly
+H : human task frame, e1 = grasp -> release on the table, e3 = up
+F : robot task frame, f1 = block -> mug, f3 = world z
+S : diag(s_along, 1, 1); s_along makes the carry length match, the sideways curve and
+    the height profile keep their metric human values
+w : minimum-jerk blend of the residual so the start pose and the release land exactly
 ```
 
-The camera pose and the depth scale never have to be known: only the two contact points have to
-be right, and those are taken from the sim. The trajectory is uniformly re-timed so the TCP
-stays under 0.35 m/s (speed profile kept), the gripper closes once the TCP reaches the grasp
-anchor, and short dwells let the fingers close and open.
+Neither camera pose nor depth scale has to be right; only the two contacts, and those come from
+the sim. Three constraints make up for the noisy height: the final approach stays inside a cone
+above the object (no sideways sweep into it), the carry is lifted to clear the mug rim if the
+measured peak is too low, and it does not dip below the release height once lifted. The path is
+smoothed and uniformly re-timed to stay under 0.35 m/s (shape of the speed profile kept). The
+gripper closes on arrival at the grasp anchor, with short dwells for the fingers.
 
-**4. Sim** (`touchpoint/sim.py`). Panda from mujoco_menagerie, 4 cm cube, bowl, random layouts
-within the reachable area. A 20 Hz Cartesian command goes through damped least-squares IK to the
-Panda's joint position servos; grasping is physical (friction), no welds. This is a LIBERO-style
-tabletop task built directly in MuJoCo, not LIBERO itself (its robosuite stack was not used).
+**4. Sim** (`touchpoint/sim.py`). Panda from mujoco_menagerie, a 4.2 x 4.2 x 3 cm block standing in
+for the disc (a 3 mm disc cannot be pinched top-down by the Panda fingers), an open mug 10 cm tall,
+random layouts. 20 Hz Cartesian commands, damped least-squares IK to the joint servos, physical
+friction grasp. This is a LIBERO-style tabletop task in raw MuJoCo, not LIBERO itself.
 
-**5. Policy** (`touchpoint/policy.py`). Every clip is re-anchored to random layouts and executed;
-only successful rollouts are kept. During collection the command is perturbed with Gaussian noise
-(DART) while the label stays the clean plan, and 30% of episodes nudge the cube mid-approach with
-the plan re-anchored on the fly, so the data contains recoveries. A 3x256 MLP maps
-(command position, cube and bowl relative to it, finger width) to a velocity command and a
-gripper logit. Training takes about a minute on CPU.
+**5. Policy** (`touchpoint/policy.py`). Each episode is re-anchored to random layouts and executed;
+successful rollouts are kept. The executed command gets Gaussian noise (DART) while the label is
+the clean plan, and 30% of rollouts nudge the block mid-approach and re-anchor the plan on the fly,
+so the data contains recoveries. A 3x256 MLP maps (commanded TCP position, block and mug relative
+to it, finger width) to a velocity command and a gripper logit.
 
 ## Results
 
-Success over 100 random layouts (fixed seeds). "Nudged" moves the cube 5 cm when the gripper is
-within 8 cm of it.
+Success over 100 random block/mug layouts with fixed seeds; each layout replays one of the 13
+episodes. "Nudged" moves the block 5 cm when the gripper is within 8 cm of it.
 
-**Phone clips: (run `make real` on your clips; table goes here)**
-
-**Synthetic hand tracks (pipeline check only, not real data):**
-
-| Method | Cube nudged mid-approach | Success |
+| Method | Block nudged mid-approach | Success |
 |---|---|---|
 | Fixed-fit replay (one global fit, no anchoring) | no | 0% |
-| Contact-anchored replay (open loop) | no | 100% |
-| BC policy (closed loop) | no | 78% |
-| Contact-anchored replay (open loop) | yes | 7% |
-| BC policy (closed loop) | yes | 76% |
+| Contact-anchored replay (open loop) | no | 75% |
+| BC policy (closed loop) | no | 16% |
+| Contact-anchored replay (open loop) | yes | 4% |
+| BC policy (closed loop) | yes | 11% |
 
 100 random layouts, fixed seeds.
 
-![results](docs/results_synthetic.png)
+![results](docs/results.png)
 
-BC policy with the cube nudged mid-approach (synthetic tracks):
+Reading the table: anchoring is what makes the human episodes usable at all (0% -> 75%), and
+the open-loop replay has no way to react when the block moves (4%). The BC policy is the weak
+part on real data: it reacts to the nudge (11% vs 4%) but succeeds in only 16% of static
+layouts. On synthetic side-view tracks the same method reached 78% (earlier scene with a bowl and a cube), so the gap comes from
+the 13 real episodes being far less consistent (different approach paths, heights and pauses);
+a single MLP averages them and misses the block by a few centimetres or closes too early.
 
-![bc nudged](docs/bc_nudged_synthetic.gif)
+![phases](docs/phases.png)
 
-![phases](docs/phases_synthetic.png)
+`make synthetic` runs the same pipeline on generated side-view hand tracks (`touchpoint/synthetic.py`).
+It is a pipeline check used by the tests; its numbers are not reported as results.
 
 ## What worked
 
-- Anchoring on contacts. One global fit of the human track to the workspace (fixed-fit replay)
-  fails as soon as the layout moves a few centimetres; anchoring makes open-loop replay succeed
-  on every layout tested (synthetic tracks), without knowing the camera pose.
-- Using the re-anchored replays as an expert. The same anchoring that maps a clip to a layout also
-  re-plans after a cube nudge, which gives recovery labels for free.
-- Velocity labels over a short lookahead (8 steps) instead of single-step deltas, and dropping
-  frames where the plan is waiting. Without these the policy imitated the pauses and stalled
-  at the cube.
-- Closing the gripper on arrival at the anchor rather than at the human threshold crossing.
+- Anchoring on contacts. A single global fit of the human track to the workspace (fixed-fit
+  replay) fails once the layout differs from the one it was fitted on; anchoring per layout works
+  without camera calibration.
+- The mug as a moving reference. It removes the handheld drift and gives metric scale per frame.
+- Re-anchoring as the expert: the same mapping re-plans after a nudge and labels recoveries.
+- Velocity labels over an 8-step lookahead and dropping frames where the plan waits; without them
+  the policy copied the pauses and stalled at the object.
 
 ## What did not / limitations
 
-- Monocular depth from hand size is approximate (10-20% scale error with a wrong FOV guess).
-  This is the reason for anchoring: only the along-transport scale matters and it is fixed by
-  the anchors. Lift height inherits the scale error.
-- Wrist orientation is ignored; the Panda grasps top-down with a fixed yaw. Clips with a side
-  grasp still retarget, but the grasp itself is a top-down one.
-- The open-loop replay is near-perfect in this sim, so the policy's job is mainly robustness
-  (nudge column). The BC policy still fails some static layouts, mostly by hovering at the cube
-  without closing. More data or action chunking should fix most of it.
-- The state-based policy sees the cube pose from the simulator, not from pixels.
-- The scene is a simplified LIBERO-style task in raw MuJoCo, not a LIBERO benchmark task.
+- Height from hand size is noisy; the carry and approach constraints above exist because the raw
+  height made the arm clip the mug rim or sweep the block off the table.
+- Episode splitting finds 13 of the 14 episodes; one in clip02 merges two drops into one long
+  episode, and a few episodes have poor grasp timing and fail even open loop.
+- The BC policy does not reach the replay's success rate (see Results). Things tried that did not
+  help: 1000 instead of 600 demos, lower DART noise, extra features relative to the measured TCP.
+  Likely fixes: action chunking or a diffusion/flow head for the multi-modal demos, conditioning on
+  the episode, or filtering the episodes that replay unreliably.
+- Wrist orientation is ignored (top-down grasp, fixed yaw), and the block is bigger than the disc.
+- The policy uses the simulator's block pose, not pixels. One block per episode, so the sequential
+  multi-disc structure of the clips is not reproduced in one rollout.
 
 ## Next steps
 
-- Port the scene and the anchoring to LIBERO (robosuite) and report on a LIBERO pick-place task.
-- Use the re-anchored episodes, rendered from the sim camera with language labels, to post-train
-  a small VLA (e.g. SmolVLA) instead of the state MLP.
-- RL fine-tuning (residual policy on top of BC) with the success check as reward.
-- Use the wrist orientation from the world landmarks for the grasp yaw.
+- Port the scene and the anchoring to LIBERO and evaluate on a LIBERO pick-place task.
+- Render the re-anchored episodes from a sim camera with language labels and post-train a small
+  VLA (e.g. SmolVLA) on them instead of the state MLP.
+- RL fine-tuning of the BC policy with the success check as reward; sequential multi-object episodes.
 
 ## Layout
 
 ```
-run_all.py              one entry point (MediaPipe -> retarget -> collect -> train -> eval -> figures)
-touchpoint/hand.py      MediaPipe, depth solve, smoothing, overlays
-touchpoint/retarget.py  phase segmentation, contact-anchored retargeting, re-anchoring
-touchpoint/sim.py       MuJoCo scene, IK, success check
-touchpoint/policy.py    data collection with DART + nudges, MLP behaviour cloning
-touchpoint/evaluate.py  fixed-seed evaluation
-touchpoint/synthetic.py synthetic MediaPipe-like tracks for tests
-data/tracks, data/clips processed hand tracks and downsampled clips (committed)
+run_all.py               entry point: tracks -> episodes -> retarget -> collect -> train -> eval -> figures
+touchpoint/topdown.py    mug tracking, mug-centric pinch track, episode splitting
+touchpoint/hand.py       MediaPipe, side-view depth solve, overlays
+touchpoint/retarget.py   contact-anchored retargeting, re-anchoring
+touchpoint/sim.py        MuJoCo scene, IK, success check
+touchpoint/policy.py     DART + nudge data collection, MLP behaviour cloning
+touchpoint/evaluate.py   fixed-seed evaluation
+touchpoint/synthetic.py  synthetic MediaPipe-like tracks for tests
+scripts/prepare_clips.py how the raw phone videos were cropped
 ```

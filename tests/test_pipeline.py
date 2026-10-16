@@ -44,7 +44,7 @@ def test_anchored_plan_hits_anchors_and_succeeds(tracks):
     for tk in tracks:
         layout = sample_layout(rng)
         env.reset(layout)
-        plan = retarget(tk, layout["cube"], layout["bowl"], env.home_tcp)
+        plan = retarget(tk, layout["cube"], layout["mug"], env.home_tcp)
         assert np.allclose(plan["ref"][plan["grasp_step"], :2], layout["cube"], atol=0.01)
         ok, obs, act = run_plan(env, layout, plan)
         assert ok
@@ -57,3 +57,22 @@ def test_bc_trains_and_runs(tracks):
     model = bc.train(obs, act, epochs=2, log=lambda *_: None)
     env = PickPlaceEnv()
     run_policy(env, sample_layout(np.random.default_rng(0)), bc.as_controller(model), max_steps=40)
+
+
+def test_real_tracks_split_into_episodes():
+    from pathlib import Path
+
+    from run_all import load_raw
+    from touchpoint.topdown import lift_topdown, split_episodes
+    files = sorted((Path(__file__).resolve().parents[1] / "data" / "tracks").glob("*.npz"))
+    if not files:
+        pytest.skip("no committed hand tracks")
+    n = 0
+    for f in files:
+        raw = load_raw(f)
+        eps = split_episodes(lift_topdown(raw, raw["mug"]))
+        for e in eps:
+            assert e["grasp"] < e["release"]
+            assert np.linalg.norm(e["wrist"][e["release"], :2]) < 0.09   # release over the mug
+        n += len(eps)
+    assert n >= 10

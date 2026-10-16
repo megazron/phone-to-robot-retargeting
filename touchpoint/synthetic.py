@@ -57,7 +57,7 @@ def look_at(eye, target):
 def demo_script(rng):
     """Wrist keyframes in a table frame (x away from the person, y left, z up)."""
     obj = np.array([0.28, -0.06, 0.0]) + rng.normal(0, 0.02, 3) * [1, 1, 0]
-    bowl = np.array([0.30, 0.20, 0.0]) + rng.normal(0, 0.02, 3) * [1, 1, 0]
+    mug = np.array([0.30, 0.20, 0.0]) + rng.normal(0, 0.02, 3) * [1, 1, 0]
     rest = np.array([0.05, -0.02, 0.06])
     lift = rng.uniform(0.10, 0.16)
     hz = 0.075                                   # wrist height when fingertips are at the table
@@ -67,11 +67,11 @@ def demo_script(rng):
         (0.6, obj + [-0.02, 0, hz], 0.10),
         (0.35, obj + [-0.02, 0, hz], 0.045),
         (0.9, obj + [-0.02, 0, hz + lift], 0.045),
-        (1.0, bowl + [-0.02, 0, hz + 0.06 + lift * 0.4], 0.045),
-        (0.5, bowl + [-0.02, 0, hz + 0.05], 0.045),
-        (0.35, bowl + [-0.02, 0, hz + 0.05], 0.10),
-        (0.9, bowl + [-0.12, -0.05, hz + 0.12], 0.07),
-        (0.5, bowl + [-0.12, -0.05, hz + 0.12], 0.07),
+        (1.0, mug + [-0.02, 0, hz + 0.06 + lift * 0.4], 0.045),
+        (0.5, mug + [-0.02, 0, hz + 0.05], 0.045),
+        (0.35, mug + [-0.02, 0, hz + 0.05], 0.10),
+        (0.9, mug + [-0.12, -0.05, hz + 0.12], 0.07),
+        (0.5, mug + [-0.12, -0.05, hz + 0.12], 0.07),
     ]
     speed = rng.uniform(0.85, 1.2)
     times = np.cumsum([0] + [k[0] * speed for k in keys[1:]])
@@ -85,12 +85,12 @@ def demo_script(rng):
         pos[m] = (1 - s) * keys[i][1] + s * keys[i + 1][1]
         ap[m] = (1 - s[:, 0]) * keys[i][2] + s[:, 0] * keys[i + 1][2]
     held = (t >= times[3]) & (t <= times[7] - 0.15)
-    return t, pos, ap, obj, bowl, held
+    return t, pos, ap, obj, mug, held
 
 
 def make_clip(seed=0, render=True):
     rng = np.random.default_rng(seed)
-    t, pos, ap, obj, bowl, held = demo_script(rng)
+    t, pos, ap, obj, mug, held = demo_script(rng)
     eye = np.array([0.20, -0.62, 0.42]) + rng.normal(0, 0.03, 3)
     Rc = look_at(eye, np.array([0.25, 0.08, 0.05]))
     f = focal_px(W) * rng.uniform(0.9, 1.1)          # true focal differs from the assumed one
@@ -110,25 +110,25 @@ def make_clip(seed=0, render=True):
         centre = P.mean(0)
         world[i] = (P - centre) @ Rc.T + rng.normal(0, 0.002, (21, 3))
         img[i] = project(P) + rng.normal(0, 1.5, (21, 2))
-        cpos = pos[i] + R_hand @ (0.5 * (_BASE[4] + _BASE[8])) if held[i] else (obj if t[i] < 2 else bowl)
+        cpos = pos[i] + R_hand @ (0.5 * (_BASE[4] + _BASE[8])) if held[i] else (obj if t[i] < 2 else mug)
         cube_px[i] = project(cpos[None])[0]
     drop = rng.random(T) < 0.05
     drop[T // 3:T // 3 + 4] = True                            # a short tracking dropout
     img[drop] = np.nan
     world[drop] = np.nan
     raw = {"img": img, "world": world, "fps": FPS, "width": W, "height": H}
-    frames = _render(img, cube_px, project(np.array([bowl])), drop) if render else None
+    frames = _render(img, cube_px, project(np.array([mug])), drop) if render else None
     truth = {"wrist_table": pos, "aperture": ap, "R_cam": Rc, "eye": eye, "f": f}
     return raw, frames, truth
 
 
-def _render(img, cube_px, bowl_px, drop):
+def _render(img, cube_px, mug_px, drop):
     import cv2
     frames = []
     last = None
     for i in range(len(img)):
         fr = np.full((H, W, 3), (205, 196, 182), np.uint8)
-        cv2.ellipse(fr, tuple(bowl_px[0].astype(int)), (70, 28), 0, 0, 360, (190, 115, 50), -1, cv2.LINE_AA)
+        cv2.ellipse(fr, tuple(mug_px[0].astype(int)), (70, 28), 0, 0, 360, (190, 115, 50), -1, cv2.LINE_AA)
         c = cube_px[i].astype(int)
         cv2.rectangle(fr, tuple(c - 14), tuple(c + 14), (45, 55, 215), -1)
         lm = img[i] if not drop[i] else last

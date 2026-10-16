@@ -44,7 +44,7 @@ def _eval_worker(args):
                 res[key] = run_policy(env, layout, policy, nudge_rng=nudge)
             else:
                 plan = (fixed_fit_plan(track, env.home_tcp) if name == "fixed_fit"
-                        else retarget(track, layout["cube"], layout["bowl"], env.home_tcp))
+                        else retarget(track, layout["cube"], layout["mug"], env.home_tcp))
                 res[key] = run_plan(env, layout, plan, nudge_rng=nudge)[0]
         rows.append(res)
     return rows
@@ -61,7 +61,7 @@ def evaluate(tracks, model=None, n=100, workers=None):
 
 
 def table(metrics, n):
-    lines = ["| Method | Cube nudged mid-approach | Success |", "|---|---|---|"]
+    lines = ["| Method | Block nudged mid-approach | Success |", "|---|---|---|"]
     for name, nudged, label in METHODS:
         key = f"{name}{'_nudged' if nudged else ''}"
         if key in metrics:

@@ -30,7 +30,7 @@ def _collect_worker(args):
         track = tracks[seed % len(tracks)]
         env.reset(layout)
         try:
-            plan = retarget(track, layout["cube"], layout["bowl"], env.home_tcp)
+            plan = retarget(track, layout["cube"], layout["mug"], env.home_tcp)
         except ValueError:
             continue
         nudge = np.random.default_rng(seed + 10**6) if rng.random() < nudge_frac else None

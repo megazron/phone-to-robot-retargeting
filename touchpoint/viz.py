@@ -22,14 +22,17 @@ def side_by_side(clip_frames, track, plan, sim_frames, out_path, every=2, height
     for i in range(0, len(sim_frames), every):
         k = min(int(plan["frame"][min(i, len(plan["frame"]) - 1)]), len(clip_frames) - 1)
         phase = PHASES[int(plan["phase"][min(i, len(plan["phase"]) - 1)])]
-        left = draw_overlay(clip_frames[k], track["img"][k] * lm_scale, f"human  t={track['t'][k]:.2f}s  {phase}")
+        left = draw_overlay(clip_frames[k], track["img"][k] * lm_scale)
         s = height / left.shape[0]
         left = cv2.resize(left, (int(left.shape[1] * s) // 2 * 2, height), interpolation=cv2.INTER_AREA)
+        cv2.rectangle(left, (0, 0), (left.shape[1], 30), (0, 0, 0), -1)
+        cv2.putText(left, f"phone  t={track['t'][k]:.1f}s  {phase}", (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                    (255, 255, 255), 1, cv2.LINE_AA)
         right = sim_frames[i]
         right = cv2.resize(right, (int(right.shape[1] * height / right.shape[0]) // 2 * 2, height))
         grip = "closed" if plan["grip"][min(i, len(plan["grip"]) - 1)] > 0.5 else "open"
         cv2.rectangle(right, (0, 0), (right.shape[1], 30), (0, 0, 0), -1)
-        cv2.putText(right, f"panda  step {i}  gripper {grip}", (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+        cv2.putText(right, f"panda  step {i}  gripper {grip}", (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                     (255, 255, 255), 1, cv2.LINE_AA)
         out.append(np.concatenate([left, right], axis=1))
     fps = 1.0 / (0.05 * every)
@@ -91,7 +94,7 @@ def results_chart(metrics, n, out_path, title):
     y = np.arange(len(rows))[::-1]
     h = 0.36
     for yi, (label, a, b) in zip(y, rows):
-        for off, key, col, name in ((h / 2 + 0.02, a, BLUE, "static layout"), (-h / 2 - 0.02, b, ORANGE, "cube nudged mid-approach")):
+        for off, key, col, name in ((h / 2 + 0.02, a, BLUE, "static layout"), (-h / 2 - 0.02, b, ORANGE, "block nudged mid-approach")):
             if key and key in metrics:
                 v = metrics[key] * 100
                 ax.barh(yi + off, v, height=h, color=col, label=name if yi == y[1] else None)
@@ -104,6 +107,46 @@ def results_chart(metrics, n, out_path, title):
     _style(ax)
     ax.grid(axis="x", color=GRID, lw=0.8)
     ax.grid(axis="y", visible=False)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=130)
+    plt.close(fig)
+
+
+def episodes_plot(tracks, names, out_path):
+    """All human episodes in the task frame: top view and height, aligned at the grasp."""
+    fig, axes = plt.subplots(1, 2, figsize=(9, 4), gridspec_kw={"width_ratios": [1, 1.3]})
+    ax = axes[0]
+    if "up" in tracks[0]:
+        ax.add_patch(plt.Circle((0, 0), 0.04, color="#3a3a38", alpha=0.25, lw=0))
+        ax.text(0, 0, "mug", ha="center", va="center", fontsize=8, color=INK)
+    for tk in tracks:
+        p, g, r = tk["wrist"], tk.get("grasp"), tk.get("release")
+        if g is None:
+            continue
+        ax.plot(p[:, 0] * 100, p[:, 1] * 100, color=BLUE, lw=1.2, alpha=0.7)
+        ax.plot(*(p[g, :2] * 100), "o", color=ORANGE, ms=6, mec="white", mew=1)
+        ax.plot(*(p[r, :2] * 100), "s", color=INK, ms=5, mec="white", mew=1)
+    ax.plot([], [], "o", color=ORANGE, label="grasp")
+    ax.plot([], [], "s", color=INK, label="release")
+    ax.set_aspect("equal")
+    ax.set_xlabel("x (cm, mug frame)", fontsize=9, color=INK)
+    ax.set_ylabel("y (cm)", fontsize=9, color=INK)
+    ax.set_title(f"Pinch point, {len(tracks)} episodes (top view)", loc="left", fontsize=10, color=INK)
+    ax.legend(fontsize=8, frameon=False)
+    _style(ax)
+    ax = axes[1]
+    for tk in tracks:
+        g = tk.get("grasp")
+        if g is None:
+            continue
+        t = tk["t"] - tk["t"][g]
+        ax.plot(t, tk["wrist"][:, 2] * 100, color=BLUE, lw=1.2, alpha=0.7)
+        ax.plot(t[tk["release"]], tk["wrist"][tk["release"], 2] * 100, "s", color=INK, ms=5, mec="white", mew=1)
+    ax.axvline(0, color=ORANGE, lw=1.2, ls="--")
+    ax.set_xlabel("time from grasp (s)", fontsize=9, color=INK)
+    ax.set_ylabel("height from hand size (cm, approx.)", fontsize=9, color=INK)
+    ax.set_title("Height profile", loc="left", fontsize=10, color=INK)
+    _style(ax)
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
