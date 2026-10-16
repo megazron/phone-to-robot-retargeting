@@ -16,6 +16,10 @@ learning, and it is the method that holds up when the block is moved.
 *Left: phone clip with MediaPipe landmarks and the detected phase. Right: the Panda executing the
 same episode, re-anchored to a different block and mug position.*
 
+![raw clip to robot](docs/raw_to_robot.gif)
+
+*Raw clip with the pinch-point trail and the tracked mug rim, the same episode as a mug-centred top view (colour is estimated height, dot is the grasp, square the release), and the Panda executing it.*
+
 ## Data
 
 `data/raw/clip01-04.mp4`: top-down, handheld phone, 30 fps, beige table, one black mug, four
@@ -80,6 +84,10 @@ above the object (no sideways sweep into it), the carry is lifted to clear the m
 measured peak is too low, and it does not dip below the release height once lifted. The path is
 smoothed and uniformly re-timed to stay under 0.35 m/s (shape of the speed profile kept). The
 gripper closes on arrival at the grasp anchor, with short dwells for the fingers.
+
+![one demonstration, four layouts](docs/one_demo_many_layouts.gif)
+
+*One phone episode re-anchored to four random block and mug layouts and executed in sim, in step with the clip (`python scripts/make_readme_gifs.py`).*
 
 **4. Sim** (`touchpoint/sim.py`). Panda from mujoco_menagerie, a 4.2 x 4.2 x 3 cm block standing in
 for the disc (a 3 mm disc cannot be pinched top-down by the Panda fingers), an open mug 10 cm tall,
