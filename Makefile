@@ -18,7 +18,7 @@ synthetic:
 	$(PY) run_all.py --synthetic
 
 smoke test:
-	$(PY) -m pytest -q tests
+	env -u PYTHONPATH PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PY) -m pytest -q tests
 
 clean:
 	rm -rf results/*/bc_policy.pt .pytest_cache
