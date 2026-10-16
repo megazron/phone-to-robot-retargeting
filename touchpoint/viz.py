@@ -151,3 +151,32 @@ def episodes_plot(tracks, names, out_path):
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
+
+
+def nudge_comparison(open_frames, reanchor_frames, nudge_step, out_path, outcomes=None, every=2, fps=12,
+                     panel=(360, 270), hold=12):
+    """Two rollouts on the same nudged layout, side by side: open-loop replay vs online re-anchoring."""
+    n = max(len(open_frames), len(reanchor_frames))
+    out = []
+    for i in list(range(0, n, every)) + [n - 1] * hold:
+        tiles = []
+        for k, (frames, label) in enumerate(((open_frames, "open-loop replay"), (reanchor_frames, "online re-anchoring"))):
+            f = cv2.resize(frames[min(i, len(frames) - 1)], panel, interpolation=cv2.INTER_AREA)
+            cv2.rectangle(f, (0, 0), (panel[0], 26), (0, 0, 0), -1)
+            cv2.putText(f, label, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
+            if nudge_step is not None and nudge_step <= i < nudge_step + 2 * fps * every // 2:
+                cv2.rectangle(f, (0, panel[1] - 26), (panel[0], panel[1]), (0, 0, 0), -1)
+                cv2.putText(f, "block nudged 5 cm", (8, panel[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                            (255, 210, 120), 1, cv2.LINE_AA)
+            if outcomes is not None and i >= n - 1:
+                ok = outcomes[k]
+                cv2.rectangle(f, (0, panel[1] - 26), (panel[0], panel[1]), (0, 0, 0), -1)
+                cv2.putText(f, "block in mug" if ok else "block missed", (8, panel[1] - 8),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (140, 230, 140) if ok else (255, 140, 120), 1, cv2.LINE_AA)
+            tiles.append(f)
+        out.append(np.concatenate([tiles[0], np.full((panel[1], 4, 3), 255, np.uint8), tiles[1]], axis=1))
+    # shared adaptive palette without dithering keeps the file small
+    from PIL import Image
+    pal = Image.fromarray(np.concatenate(out[::max(1, len(out) // 8)], axis=0)).quantize(64, method=Image.Quantize.MEDIANCUT)
+    ims = [Image.fromarray(f).quantize(palette=pal, dither=Image.Dither.NONE) for f in out]
+    ims[0].save(out_path, save_all=True, append_images=ims[1:], duration=int(1000 / fps), loop=0, optimize=True)

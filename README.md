@@ -123,6 +123,10 @@ layouts. On synthetic side-view tracks the same method reached 78% (earlier scen
 the 13 real episodes being far less consistent (different approach paths, heights and pauses);
 a single MLP averages them and misses the block by a few centimetres or closes too early.
 
+![open-loop replay vs online re-anchoring](docs/reanchor_nudge.gif)
+
+Same layout (evaluation layout 0) and same 5 cm nudge: the open-loop replay misses the block, online re-anchoring puts it in the mug (`python scripts/make_nudge_gif.py`).
+
 ![phases](docs/phases.png)
 
 `make synthetic` runs the same pipeline on generated side-view hand tracks (`touchpoint/synthetic.py`).
