@@ -19,14 +19,16 @@
   "success": {
     "fixed_fit": 0.0,
     "anchored": 0.75,
-    "bc": 0.16,
+    "reanchor": 0.75,
+    "bc": 0.15,
     "anchored_nudged": 0.04,
-    "bc_nudged": 0.11
+    "reanchor_nudged": 0.66,
+    "bc_nudged": 0.13
   },
   "collection": {
     "episodes": 600,
     "kept": 425,
     "samples": 103773
   },
-  "runtime_s": 205.7
+  "runtime_s": 221.5
 }

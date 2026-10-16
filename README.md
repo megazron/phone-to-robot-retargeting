@@ -7,7 +7,9 @@ I filmed my hand dropping small plastic discs into a mug with a handheld phone (
 trajectory in a mug-centred frame, and the two contact moments (fingers close on a disc, fingers
 open over the mug) are pinned to the object and the mug in the simulator. Everything between the
 anchors keeps the shape and timing of my hand. Because the anchors can be placed anywhere, the
-13 episodes become hundreds of robot demonstrations, which train a closed-loop policy.
+13 episodes become hundreds of robot demonstrations, which train a closed-loop policy. The same
+re-anchoring, applied online to the observed block pose, is also a closed-loop controller with no
+learning, and it is the method that holds up when the block is moved.
 
 ![side by side](docs/side_by_side.gif)
 
@@ -93,23 +95,30 @@ to it, finger width) to a velocity command and a gripper logit.
 ## Results
 
 Success over 100 random block/mug layouts with fixed seeds; each layout replays one of the 13
-episodes. "Nudged" moves the block 5 cm when the gripper is within 8 cm of it.
+episodes. "Nudged" moves the block 5 cm when the gripper is within 8 cm of it. Online
+re-anchoring runs the same retargeted episode, but at every step before the grasp closes it
+compares the observed block position with the current anchor and, if they differ by more than
+1 cm, re-anchors the rest of the plan with `reanchor` (`touchpoint/retarget.py`).
 
 | Method | Block nudged mid-approach | Success |
 |---|---|---|
 | Fixed-fit replay (one global fit, no anchoring) | no | 0% |
 | Contact-anchored replay (open loop) | no | 75% |
-| BC policy (closed loop) | no | 16% |
+| Contact-anchored replay with online re-anchoring (closed loop, no learning) | no | 75% |
+| BC policy (closed loop) | no | 15% |
 | Contact-anchored replay (open loop) | yes | 4% |
-| BC policy (closed loop) | yes | 11% |
+| Contact-anchored replay with online re-anchoring (closed loop, no learning) | yes | 66% |
+| BC policy (closed loop) | yes | 13% |
 
 100 random layouts, fixed seeds.
 
 ![results](docs/results.png)
 
 Reading the table: anchoring is what makes the human episodes usable at all (0% -> 75%), and
-the open-loop replay has no way to react when the block moves (4%). The BC policy is the weak
-part on real data: it reacts to the nudge (11% vs 4%) but succeeds in only 16% of static
+the open-loop replay has no way to react when the block moves (4%). Re-anchoring the plan online
+to the observed block recovers most of the nudged cases (66%, vs 75% static), without any
+learning. The BC policy is the weak
+part on real data: it reacts to the nudge (13% vs 4%) but succeeds in only 15% of static
 layouts. On synthetic side-view tracks the same method reached 78% (earlier scene with a bowl and a cube), so the gap comes from
 the 13 real episodes being far less consistent (different approach paths, heights and pauses);
 a single MLP averages them and misses the block by a few centimetres or closes too early.
@@ -126,6 +135,8 @@ It is a pipeline check used by the tests; its numbers are not reported as result
   without camera calibration.
 - The mug as a moving reference. It removes the handheld drift and gives metric scale per frame.
 - Re-anchoring as the expert: the same mapping re-plans after a nudge and labels recoveries.
+- Re-anchoring as the controller: running it online against the observed block pose takes the
+  nudged success from 4% to 66% with no training; the BC policy gets 13%.
 - Velocity labels over an 8-step lookahead and dropping frames where the plan waits; without them
   the policy copied the pauses and stalled at the object.
 
@@ -135,7 +146,7 @@ It is a pipeline check used by the tests; its numbers are not reported as result
   height made the arm clip the mug rim or sweep the block off the table.
 - Episode splitting finds 13 of the 14 episodes; one in clip02 merges two drops into one long
   episode, and a few episodes have poor grasp timing and fail even open loop.
-- The BC policy does not reach the replay's success rate (see Results). Things tried that did not
+- The BC policy does not reach the replay's success rate, open loop or re-anchored (see Results). Things tried that did not
   help: 1000 instead of 600 demos, lower DART noise, extra features relative to the measured TCP.
   Likely fixes: action chunking or a diffusion/flow head for the multi-modal demos, conditioning on
   the episode, or filtering the episodes that replay unreliably.

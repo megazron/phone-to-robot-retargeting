@@ -5,6 +5,7 @@ from .retarget import reanchor
 from .sim import X_RANGE, Y_RANGE
 
 NUDGE = 0.05
+REANCHOR_TOL = 0.01
 LABEL_LEAD = 3
 RELEASE_LEAD = 6
 LOOKAHEAD = 8
@@ -35,19 +36,29 @@ def obs_vec(o):
     return np.r_[tcp, cube - tcp, mug[:2] - tcp[:2], mug[:2] - cube[:2], o["width"] / 0.08].astype(np.float32)
 
 
-def run_plan(env, layout, plan, nudge_rng=None, replan=False, noise=0.0, rng=None, frames=None):
+def run_plan(env, layout, plan, nudge_rng=None, replan=False, noise=0.0, rng=None, frames=None,
+             track_cube=False):
     """Open-loop execution of a retargeted plan. With replan=True the plan is re-anchored when
     the cube is nudged (that is the expert used to label recovery data).
+    With track_cube=True the plan is re-anchored from the observed cube pose at every step
+    before the grasp closes, whenever it is more than REANCHOR_TOL from the current anchor
+    (closed loop, no learning).
     Returns success flag and (obs, action) pairs labelled with the clean plan."""
     env.reset(layout)
     obs, acts = [], []
     nst = {"done": nudge_rng is None}
+    anchor = np.asarray(layout["cube"], float)[:2].copy()
     i = 0
     while i < len(plan["ref"]):
         if nudge_rng is not None and i < plan["grasp_step"]:
             moved = _maybe_nudge(env, nudge_rng, nst)
             if moved and replan:
                 plan = reanchor(plan, i, moved[1], moved[0])
+        if track_cube and i <= plan["grasp_step"]:
+            seen = env.obs()["cube"][:2]
+            if np.linalg.norm(seen - anchor) > REANCHOR_TOL:
+                plan = reanchor(plan, i, seen, anchor)
+                anchor = seen.copy()
         o = env.obs()
         target, grip = plan["ref"][i], plan["grip"][i]
         obs.append(obs_vec(o))

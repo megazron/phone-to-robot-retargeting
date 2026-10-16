@@ -89,8 +89,9 @@ def phase_plot(track, plan, widths, out_path):
 def results_chart(metrics, n, out_path, title):
     rows = [("Fixed-fit replay", "fixed_fit", None),
             ("Contact-anchored replay", "anchored", "anchored_nudged"),
+            ("Anchored + online re-anchoring", "reanchor", "reanchor_nudged"),
             ("BC policy (closed loop)", "bc", "bc_nudged")]
-    fig, ax = plt.subplots(figsize=(7, 3.2))
+    fig, ax = plt.subplots(figsize=(7, 3.9))
     y = np.arange(len(rows))[::-1]
     h = 0.36
     for yi, (label, a, b) in zip(y, rows):
@@ -102,7 +103,7 @@ def results_chart(metrics, n, out_path, title):
     ax.set_yticks(y, [r[0] for r in rows], fontsize=9, color=INK)
     ax.set_xlim(0, 112)
     ax.set_xlabel("success rate (%)", fontsize=9, color=INK)
-    ax.set_title(f"{title}  ({n} random layouts, fixed seeds)", loc="left", fontsize=10, color=INK, pad=26)
+    ax.set_title(f"{title}  ({n} random layouts, fixed seeds)", loc="left", fontsize=10, color=INK, pad=32)
     ax.legend(fontsize=8, frameon=False, loc="lower left", bbox_to_anchor=(0.0, 1.06), ncol=2)
     _style(ax)
     ax.grid(axis="x", color=GRID, lw=0.8)

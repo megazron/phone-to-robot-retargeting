@@ -13,8 +13,10 @@ EVAL_SEED = 12345
 METHODS = [
     ("fixed_fit", False, "Fixed-fit replay (one global fit, no anchoring)"),
     ("anchored", False, "Contact-anchored replay (open loop)"),
+    ("reanchor", False, "Contact-anchored replay with online re-anchoring (closed loop, no learning)"),
     ("bc", False, "BC policy (closed loop)"),
     ("anchored", True, "Contact-anchored replay (open loop)"),
+    ("reanchor", True, "Contact-anchored replay with online re-anchoring (closed loop, no learning)"),
     ("bc", True, "BC policy (closed loop)"),
 ]
 
@@ -45,7 +47,7 @@ def _eval_worker(args):
             else:
                 plan = (fixed_fit_plan(track, env.home_tcp) if name == "fixed_fit"
                         else retarget(track, layout["cube"], layout["mug"], env.home_tcp))
-                res[key] = run_plan(env, layout, plan, nudge_rng=nudge)[0]
+                res[key] = run_plan(env, layout, plan, nudge_rng=nudge, track_cube=name == "reanchor")[0]
         rows.append(res)
     return rows
 
